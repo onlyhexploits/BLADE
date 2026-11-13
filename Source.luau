@@ -494,7 +494,7 @@ function Window:AddTab(first, second)
             Name = columnName,
             BackgroundTransparency = 1,
             Position = position,
-            Size = UDim2.new(0.5, -10, 0, 0),
+            Size = UDim2.new(0.5, -12, 0, 0),
             AutomaticSize = Enum.AutomaticSize.Y,
             Parent = page,
         })
@@ -502,15 +502,15 @@ function Window:AddTab(first, second)
         return holder
     end
 
-    local left = column("Left", UDim2.fromOffset(0, 0))
-    local right = column("Right", UDim2.new(0.5, 2, 0, 0))
+    local left = column("Left", UDim2.fromOffset(2, 2))
+    local right = column("Right", UDim2.new(0.5, 2, 0, 2))
 
     tab.Page = page
     tab.Left = left
     tab.Right = right
     tab.RefreshCanvas = function()
         local height = math.max(left.AbsoluteSize.Y, right.AbsoluteSize.Y) / self.Scale.Scale
-        page.CanvasSize = UDim2.fromOffset(0, height + GUTTER)
+        page.CanvasSize = UDim2.fromOffset(0, height + GUTTER + 2)
     end
     left:GetPropertyChangedSignal("AbsoluteSize"):Connect(tab.RefreshCanvas)
     right:GetPropertyChangedSignal("AbsoluteSize"):Connect(tab.RefreshCanvas)
@@ -1429,70 +1429,6 @@ function Library:CreateWindow(config)
 
     play(root, Speed.Slow, {GroupTransparency = 0})
     play(scale, Speed.Slow, {Scale = 1})
-
-    return window
-end
-
-function Library.Demo()
-    local camera = workspace.CurrentCamera
-
-    local window = Library:CreateWindow({
-        Title = "Nebula",
-        Subtitle = "Interface library",
-        Theme = "Dark",
-        ToggleKey = Enum.KeyCode.RightShift,
-    })
-
-    local general = window:AddTab("General")
-    local appearance = window:AddTab("Appearance")
-    local settings = window:AddTab("Settings")
-
-    local gameplay = general:AddSection({Title = "Gameplay", Side = "Left"})
-    gameplay:AddToggle("Auto Sprint", "Run without holding a key", true, function(value)
-        print("Auto Sprint:", value)
-    end)
-    gameplay:AddSlider("Sensitivity", "Camera turning speed", 1, 100, 38, function(value)
-        print("Sensitivity:", value)
-    end)
-    gameplay:AddDropdown("Difficulty", "How hard the game feels", {"Easy", "Normal", "Hard", "Insane"}, "Normal", function(option)
-        print("Difficulty:", option)
-    end)
-
-    local view = general:AddSection({Title = "Camera", Side = "Right"})
-    local fov = view:AddSlider("Field Of View", "How wide the camera sees", 40, 120, math.floor(camera.FieldOfView + 0.5), function(value)
-        camera.FieldOfView = value
-    end)
-    view:AddToggle("Smooth Camera", "Softens camera motion", false, function(value)
-        print("Smooth Camera:", value)
-    end)
-    view:AddButton("Reset Camera", "Back to the default view", function()
-        fov:Set(70)
-    end)
-
-    local interface = appearance:AddSection({Title = "Interface", Side = "Left"})
-    interface:AddDropdown("Language", "Text used in menus", {"English", "Indonesian", "Spanish"}, "English", function(option)
-        print("Language:", option)
-    end)
-    interface:AddSlider("Text Scale", "Size of interface text", 0.8, 1.4, 1, function(value)
-        print("Text Scale:", value)
-    end, 0.1)
-    interface:AddToggle("Tooltips", "Show hints on hover", true, function(value)
-        print("Tooltips:", value)
-    end)
-
-    local themes = appearance:AddSection({Title = "Themes", Side = "Right"})
-    themes:AddThemeSelector("Change your theme", {"Light", "Dark", "System"}, function(name)
-        print("Theme:", name)
-    end)
-
-    local controls = settings:AddSection({Title = "Window", Side = "Left"})
-    controls:AddLabel("Toggle key", "Press RightShift to hide or show")
-    controls:AddButton("Close Window", "Remove this interface", function()
-        window:Destroy()
-    end, "Close")
-
-    local about = settings:AddSection({Title = "About", Side = "Right"})
-    about:AddLabel("Nebula UI", "Version " .. Library.Version)
 
     return window
 end
