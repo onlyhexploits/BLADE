@@ -589,6 +589,8 @@ Modules.Icons = function()
 		},
 	}
 
+	Glyphs["shopping-cart"] = Glyphs["cart"]
+
 	local function Atan2(y, x)
 		if math.atan2 then
 			return math.atan2(y, x)
@@ -709,6 +711,165 @@ Modules.Icons = function()
 	end
 
 	return Icons
+end
+
+Modules.Icon = function()
+	local Util = Require("Util")
+	local Icons = Require("Icons")
+
+	-- Resolves an icon name to something drawable, in this order:
+	--   1. an asset id or image url ("rbxassetid://123", 123)
+	--   2. a name from the Footagesus/Icons packs ("target", "solar:home-bold", "geist:window")
+	--   3. one of the built-in vector glyphs
+	local Icon = {
+		Provider = nil,
+		Attempted = false,
+		Type = nil,
+		DefaultUrl = "https://raw.githubusercontent.com/Footagesus/Icons/main/Main-v2.lua",
+	}
+
+	local Handle = {}
+	Handle.__index = Handle
+
+	function Handle:SetToken(token)
+		self.Token = token
+		for _, layer in ipairs(self.Layers) do
+			self.Theme:Style(layer, { ImageColor3 = token })
+		end
+	end
+
+	function Handle:Destroy()
+		self.Frame:Destroy()
+	end
+
+	local function Fetch(url)
+		local ok, body = pcall(function()
+			return game:HttpGet(url)
+		end)
+		if ok then
+			return body
+		end
+		return game:HttpGetAsync(url)
+	end
+
+	function Icon.SetProvider(provider)
+		Icon.Provider = provider
+		if provider and Icon.Type then
+			pcall(provider.SetIconsType, Icon.Type)
+		end
+	end
+
+	-- Footagesus/Icons decides it is running in an executor by checking for request(). Without it
+	-- the module blocks waiting on ReplicatedStorage, so this refuses to load it in that case.
+	-- The packs are fetched once, then every window shares them.
+	function Icon.Load(options)
+		options = options or {}
+		Icon.Attempted = true
+		if Icon.Provider then
+			return true
+		end
+		if type(request) ~= "function" then
+			warn("BladeUI: icon packs need an executor with request(), using the built-in glyphs only")
+			return false
+		end
+		if options.Type then
+			Icon.Type = options.Type
+		end
+		local ok, provider = pcall(function()
+			return loadstring(Fetch(options.Url or Icon.DefaultUrl))()
+		end)
+		if ok and type(provider) == "table" and type(provider.Icon) == "function" then
+			Icon.SetProvider(provider)
+			return true
+		end
+		warn("BladeUI: could not load the icon packs: " .. tostring(provider))
+		return false
+	end
+
+	function Icon.SetType(iconType)
+		Icon.Type = iconType
+		if Icon.Provider then
+			pcall(Icon.Provider.SetIconsType, iconType)
+		end
+	end
+
+	local function Lookup(name)
+		local provider = Icon.Provider
+		if not provider or type(name) ~= "string" then
+			return nil
+		end
+		local ok, result = pcall(provider.Icon, name, nil, true)
+		if ok and type(result) == "table" and result[1] and type(result[2]) == "table" then
+			return result
+		end
+		return nil
+	end
+
+	-- Packs are spritesheets, so each layer shows one rectangle of a shared image.
+	local function AddLayer(parent, sheet, data)
+		local layer = Util.Create("ImageLabel", {
+			Name = "Layer",
+			Size = UDim2.fromScale(1, 1),
+			Image = sheet,
+			Parent = parent,
+		})
+		local rectSize = data.ImageRectSize
+		if rectSize and (rectSize.X > 0 or rectSize.Y > 0) then
+			layer.ImageRectSize = rectSize
+			layer.ImageRectOffset = data.ImageRectPosition
+		end
+		return layer
+	end
+
+	function Icon.Has(name)
+		if Util.ResolveImage(name) then
+			return true
+		end
+		return Lookup(name) ~= nil or Icons.Has(name)
+	end
+
+	-- Returns nil when the name cannot be resolved. Otherwise the object has Frame, SetToken and Destroy.
+	function Icon.new(theme, name, size, token, parent, centered)
+		local image = Util.ResolveImage(name)
+		local found = nil
+		if not image then
+			found = Lookup(name)
+		end
+		if not image and not found then
+			if Icons.Has(name) then
+				return Icons.new(theme, name, size, token, parent, centered)
+			end
+			return nil
+		end
+
+		local self = setmetatable({ Theme = theme, Layers = {} }, Handle)
+		self.Frame = Util.Create("Frame", {
+			Name = "Icon",
+			BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(size, size),
+			Parent = parent,
+		})
+		if centered then
+			self.Frame.AnchorPoint = Vector2.new(0.5, 0.5)
+			self.Frame.Position = UDim2.fromScale(0.5, 0.5)
+		end
+
+		if image then
+			table.insert(self.Layers, AddLayer(self.Frame, image, {}))
+		else
+			table.insert(self.Layers, AddLayer(self.Frame, found[1], found[2]))
+			for _, part in ipairs(found[2].Parts or {}) do
+				local partFound = Lookup(part)
+				if partFound then
+					table.insert(self.Layers, AddLayer(self.Frame, partFound[1], partFound[2]))
+				end
+			end
+		end
+		self:SetToken(token or "Text")
+		return self
+	end
+
+	return Icon
 end
 
 Modules.Overlay = function()
@@ -2096,6 +2257,7 @@ end
 Modules.TabList = function()
 	local Util = Require("Util")
 	local Icons = Require("Icons")
+	local Icon = Require("Icon")
 
 	local TabList = {}
 	TabList.__index = TabList
@@ -2158,7 +2320,8 @@ Modules.TabList = function()
 				Parent = self.Logo,
 			})
 		else
-			local mark = Icons.new(theme, "bolt", 22, "Accent", self.Logo)
+			local mark = config.Logo and Icon.new(theme, config.Logo, 22, "Accent", self.Logo)
+				or Icons.new(theme, "bolt", 22, "Accent", self.Logo)
 			mark.Frame.Position = UDim2.fromOffset(16, 15)
 		end
 		self.Title = Util.Create("TextLabel", {
@@ -2291,9 +2454,6 @@ Modules.TabList = function()
 		if item.Icon then
 			item.Icon:SetToken(active and "Text" or "TextMuted")
 		end
-		if item.Image then
-			Util.Apply(item.Image, { ImageColor3 = color }, animate, 0.14)
-		end
 	end
 
 	function TabList:AddTab(tab)
@@ -2327,25 +2487,13 @@ Modules.TabList = function()
 		theme:Style(item.Bar, { BackgroundColor3 = "Accent" })
 		Util.Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = item.Bar })
 
-		if Icons.Has(tab.Icon) then
-			item.Icon = Icons.new(theme, tab.Icon, 16, "TextMuted", item.Pill)
+		item.Icon = Icon.new(theme, tab.Icon, 16, "TextMuted", item.Pill)
+		if item.Icon then
 			item.Icon.Frame.AnchorPoint = Vector2.new(0, 0.5)
 			item.Icon.Frame.Position = UDim2.new(0, 12, 0.5, 0)
-		else
-			local image = Util.ResolveImage(tab.Icon)
-			if image then
-				item.Image = Util.Create("ImageLabel", {
-					Name = "Icon",
-					Image = image,
-					AnchorPoint = Vector2.new(0, 0.5),
-					Position = UDim2.new(0, 12, 0.5, 0),
-					Size = UDim2.fromOffset(16, 16),
-					Parent = item.Pill,
-				})
-			end
 		end
 
-		local hasIcon = item.Icon ~= nil or item.Image ~= nil
+		local hasIcon = item.Icon ~= nil
 		item.Label = Util.Create("TextLabel", {
 			Name = "Label",
 			Text = tab.Name,
@@ -2392,6 +2540,7 @@ end
 Modules.Breadcrumb = function()
 	local Util = Require("Util")
 	local Icons = Require("Icons")
+	local Icon = Require("Icon")
 
 	local Breadcrumb = {}
 	Breadcrumb.__index = Breadcrumb
@@ -2451,24 +2600,8 @@ Modules.Breadcrumb = function()
 		for _, child in ipairs(self.IconSlot:GetChildren()) do
 			child:Destroy()
 		end
-		local hasIcon = false
-		if Icons.Has(tab.Icon) then
-			Icons.new(theme, tab.Icon, 16, "Text", self.IconSlot)
-			hasIcon = true
-		else
-			local image = Util.ResolveImage(tab.Icon)
-			if image then
-				local label = Util.Create("ImageLabel", {
-					Name = "Icon",
-					Image = image,
-					Size = UDim2.fromScale(1, 1),
-					Parent = self.IconSlot,
-				})
-				theme:Style(label, { ImageColor3 = "Text" })
-				hasIcon = true
-			end
-		end
-		self.IconSlot.Visible = hasIcon
+		local icon = Icon.new(theme, tab.Icon, 16, "Text", self.IconSlot)
+		self.IconSlot.Visible = icon ~= nil
 		self.TabLabel.Text = tab.Name
 
 		local page = tab:GetPageName()
@@ -2483,6 +2616,7 @@ end
 Modules.TopBar = function()
 	local Util = Require("Util")
 	local Icons = Require("Icons")
+	local Icon = Require("Icon")
 
 	local TopBar = {}
 	TopBar.__index = TopBar
@@ -2583,7 +2717,7 @@ Modules.TopBar = function()
 		return self
 	end
 
-	-- Text, Icon (a built-in glyph name, or false to hide it) and Callback are all optional.
+	-- Text, Icon (any name Icon can resolve, or false to hide it) and Callback are all optional.
 	-- Content is any GuiObject that replaces the default text and icon.
 	function TopBar:SetPill(options)
 		local theme = self.Ctx.Theme
@@ -2595,14 +2729,14 @@ Modules.TopBar = function()
 		end
 		if options.Icon ~= nil then
 			self.PillIcon:Destroy()
-			if options.Icon then
-				self.PillIcon = Icons.new(theme, options.Icon, 16, "TextMuted", self.Pill)
-				self.PillIcon.Frame.LayoutOrder = 2
+			local icon = options.Icon and Icon.new(theme, options.Icon, 16, "TextMuted", self.Pill)
+			if icon then
+				self.PillIcon = icon
 			else
 				self.PillIcon = Icons.new(theme, "folder", 16, "TextMuted", self.Pill)
-				self.PillIcon.Frame.LayoutOrder = 2
 				self.PillIcon.Frame.Visible = false
 			end
+			self.PillIcon.Frame.LayoutOrder = 2
 		end
 		if options.Content then
 			if self._content then
@@ -3075,6 +3209,7 @@ Modules.Window = function()
 	local Util = Require("Util")
 	local Theme = Require("Theme")
 	local Icons = Require("Icons")
+	local Icon = Require("Icon")
 	local Overlay = Require("Overlay")
 	local TopBar = Require("TopBar")
 	local Breadcrumb = Require("Breadcrumb")
@@ -3136,6 +3271,11 @@ Modules.Window = function()
 		self._connections = {}
 		self.Theme = Theme.new(config.Theme or "Purple")
 		local theme = self.Theme
+
+		-- Icons = false skips the icon packs, a table ({ Url, Type }) customises where they come from.
+		if config.Icons ~= false and not Icon.Provider and not Icon.Attempted then
+			Icon.Load(type(config.Icons) == "table" and config.Icons or nil)
+		end
 
 		local size = config.Size or Vector2.new(DefaultLayout.Width, DefaultLayout.Height)
 		local layout = Util.Merge(DefaultLayout, { Width = size.X, Height = size.Y })
@@ -3525,6 +3665,7 @@ Modules.init = function()
 	local Theme = Require("Theme")
 	local Util = Require("Util")
 	local Icons = Require("Icons")
+	local Icon = Require("Icon")
 	local Window = Require("Window")
 
 	local Library = {
@@ -3532,6 +3673,7 @@ Modules.init = function()
 		Themes = Theme.Presets,
 		Util = Util,
 		Icons = Icons,
+		Icon = Icon,
 		LoadFont = Util.LoadFont,
 		Windows = {},
 	}
@@ -3545,6 +3687,16 @@ Modules.init = function()
 	-- Accepts a full token table. Anything left out falls back to the Purple defaults.
 	function Library:RegisterTheme(name, tokens)
 		Theme.Presets[name] = tokens
+	end
+
+	-- Loads the Footagesus/Icons packs right away (windows do it on their own the first time).
+	function Library:LoadIcons(options)
+		return Icon.Load(options)
+	end
+
+	-- "lucide" by default, or "solar", "craft", "geist", "sfsymbols", "gravity".
+	function Library:SetIconsType(iconType)
+		Icon.SetType(iconType)
 	end
 
 	function Library:Destroy()
