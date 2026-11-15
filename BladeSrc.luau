@@ -220,6 +220,47 @@ Modules.Util = function()
 		return nil
 	end
 
+	-- Downloads a TTF once, wraps it in a font family file and returns a Font.
+	-- Needs isfile, writefile, getcustomasset and game:HttpGet, so it returns nil anywhere
+	-- those are missing and callers fall back to the theme font.
+	function Util.LoadFont(options)
+		local ok, font = pcall(function()
+			local HttpService = game:GetService("HttpService")
+			local name = options.Name
+			local fontFile = options.File or (name .. ".ttf")
+			local configFile = name .. ".json"
+			if not isfile(fontFile) then
+				writefile(fontFile, game:HttpGet(options.Url))
+			end
+			local family = {
+				name = name,
+				faces = {
+					{
+						name = "Bold",
+						weight = options.Weight or 700,
+						style = "normal",
+						assetId = getcustomasset(fontFile),
+					},
+				},
+			}
+			writefile(configFile, HttpService:JSONEncode(family))
+			return Font.new(getcustomasset(configFile), Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+		end)
+		if ok then
+			return font
+		end
+		warn("BladeUI: could not load font " .. tostring(options.Name) .. ": " .. tostring(font))
+		return nil
+	end
+
+	-- A table with a Url is a download request, anything else is treated as a Font already.
+	function Util.ResolveFont(value)
+		if type(value) == "table" and value.Url then
+			return Util.LoadFont(value)
+		end
+		return value
+	end
+
 	function Util.Pointer(input)
 		return Vector2.new(input.Position.X, input.Position.Y)
 	end
@@ -687,7 +728,7 @@ Modules.Overlay = function()
 		self._connections = {}
 
 		-- ZIndex order inside Root: Body 1, Scrim 2, Sidebar 3, PopupLayer 4.
-		-- The sidebar sits above the scrim on purpose so it stays undimmed.
+		-- The sidebar lies outside Root, so the scrim never dims it.
 		self.Scrim = Util.Create("TextButton", {
 			Name = "Scrim",
 			Size = UDim2.fromScale(1, 1),
@@ -698,6 +739,14 @@ Modules.Overlay = function()
 		})
 		theme:Style(self.Scrim, { BackgroundColor3 = "Scrim" })
 		theme:Corner(self.Scrim, "RadiusPanel")
+		-- Same trick as the window body: square the left corners where the sidebar joins.
+		self.ScrimPatch = Util.Create("Frame", {
+			Name = "Patch",
+			BackgroundTransparency = 1,
+			Size = UDim2.new(0, 24, 1, 0),
+			Parent = self.Scrim,
+		})
+		theme:Style(self.ScrimPatch, { BackgroundColor3 = "Scrim" })
 
 		self.Layer = Util.Create("Frame", {
 			Name = "PopupLayer",
@@ -716,6 +765,11 @@ Modules.Overlay = function()
 			end
 		end))
 		return self
+	end
+
+	function Overlay:_Fade(transparency, duration)
+		Util.Tween(self.Scrim, { BackgroundTransparency = transparency }, duration)
+		Util.Tween(self.ScrimPatch, { BackgroundTransparency = transparency }, duration)
 	end
 
 	function Overlay:IsOpen()
@@ -761,7 +815,7 @@ Modules.Overlay = function()
 			Persistent = options.Persistent,
 		}
 		self.Scrim.Visible = true
-		Util.Tween(self.Scrim, { BackgroundTransparency = self.Ctx.Theme.Tokens.ScrimTransparency }, 0.18)
+		self:_Fade(self.Ctx.Theme.Tokens.ScrimTransparency, 0.18)
 		panel.Parent = self.Layer
 		self:_Place(panel, anchor, options)
 
@@ -781,7 +835,7 @@ Modules.Overlay = function()
 		self.Current = nil
 		self._token = self._token + 1
 		local token = self._token
-		Util.Tween(self.Scrim, { BackgroundTransparency = 1 }, 0.14)
+		self:_Fade(1, 0.14)
 		task.delay(0.14, function()
 			if self._token == token then
 				self.Scrim.Visible = false
@@ -2067,11 +2121,30 @@ Modules.TabList = function()
 		})
 		theme:Style(self.Frame, { BackgroundColor3 = "Panel" })
 		theme:Corner(self.Frame, "RadiusPanel")
-		theme:Stroke(self.Frame, "Stroke", 1)
+		-- The sidebar is full height and shares the window's outer outline. This patch squares off
+		-- its right corners and the divider draws the seam, so it joins the body instead of floating.
+		self.Patch = Util.Create("Frame", {
+			Name = "Patch",
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, 0, 0, 0),
+			Size = UDim2.new(0, 24, 1, 0),
+			Parent = self.Frame,
+		})
+		theme:Style(self.Patch, { BackgroundColor3 = "Panel" })
+		self.Divider = Util.Create("Frame", {
+			Name = "Divider",
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, 0, 0, 0),
+			Size = UDim2.new(0, 1, 1, 0),
+			ZIndex = 2,
+			Parent = self.Frame,
+		})
+		theme:Style(self.Divider, { BackgroundColor3 = "Stroke" })
 
 		self.Logo = Util.Create("Frame", {
 			Name = "Logo",
 			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(0, 12),
 			Size = UDim2.new(1, 0, 0, 52),
 			Parent = self.Frame,
 		})
@@ -2096,13 +2169,20 @@ Modules.TabList = function()
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			Parent = self.Logo,
 		})
-		theme:Text(self.Title, "Text", "FontBold", "TextSizeTitle")
+		self.TitleFont = config.TitleFont
+		theme:Style(self.Title, {
+			TextColor3 = "Text",
+			FontFace = function(tokens)
+				return self.TitleFont or tokens.FontBold
+			end,
+			TextSize = "TextSizeTitle",
+		})
 
 		-- Scrolls when the window is short, so tabs can never run into the profile footer.
 		self.Nav = Util.Create("ScrollingFrame", {
 			Name = "Nav",
-			Position = UDim2.fromOffset(0, 56),
-			Size = UDim2.new(1, 0, 1, -122),
+			Position = UDim2.fromOffset(0, 68),
+			Size = UDim2.new(1, 0, 1, -134),
 			CanvasSize = UDim2.new(0, 0, 0, 0),
 			AutomaticCanvasSize = Enum.AutomaticSize.Y,
 			ScrollBarThickness = 0,
@@ -2120,7 +2200,7 @@ Modules.TabList = function()
 			Name = "Footer",
 			BackgroundTransparency = 1,
 			AnchorPoint = Vector2.new(0, 1),
-			Position = UDim2.new(0, 0, 1, -12),
+			Position = UDim2.new(0, 0, 1, -24),
 			Size = UDim2.new(1, 0, 0, 40),
 			Parent = self.Frame,
 		})
@@ -2185,6 +2265,11 @@ Modules.TabList = function()
 			self.AvatarImage.Image = image
 		end
 		self.Footer.Visible = name ~= "" or subtitle ~= ""
+	end
+
+	function TabList:SetTitleFont(font)
+		self.TitleFont = font
+		self.Title.FontFace = font or self.Ctx.Theme.Tokens.FontBold
 	end
 
 	function TabList:SetTitle(title)
@@ -3010,7 +3095,7 @@ Modules.Window = function()
 		MaxHeight = 900,
 		SidebarWidth = 172,
 		SidebarOverhang = 172,
-		SidebarInset = 12,
+		SidebarInset = 0,
 		ContentLeft = 12,
 		ContentRight = 12,
 		TopBarTop = 12,
@@ -3079,7 +3164,19 @@ Modules.Window = function()
 		-- Everything under Root (sidebar, popups, shadow) scales together. Root's own Position
 		-- is left unscaled, so it stays in screen pixels, which is what dragging needs.
 		self.Scale = Util.Create("UIScale", { Scale = 1, Parent = self.Root })
-		Util.Shadow(self.Root, theme, 8, 3)
+		-- Shell wraps sidebar and body as one shape: it carries the shadow and the outer outline,
+		-- so the two halves read as a single window instead of two floating cards.
+		self.Shell = Util.Create("Frame", {
+			Name = "Shell",
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(-layout.SidebarOverhang, 0),
+			Size = UDim2.new(1, layout.SidebarOverhang, 1, 0),
+			ZIndex = 0,
+			Parent = self.Root,
+		})
+		theme:Corner(self.Shell, "RadiusPanel")
+		theme:Stroke(self.Shell, "Stroke", 1)
+		Util.Shadow(self.Shell, theme, 8, 3)
 
 		self.Body = Util.Create("Frame", {
 			Name = "Body",
@@ -3089,7 +3186,13 @@ Modules.Window = function()
 		})
 		theme:Style(self.Body, { BackgroundColor3 = "Background" })
 		theme:Corner(self.Body, "RadiusPanel")
-		theme:Stroke(self.Body, "Stroke", 1)
+		-- Squares off the body's left corners so it meets the sidebar in a straight seam.
+		self.BodyPatch = Util.Create("Frame", {
+			Name = "Patch",
+			Size = UDim2.new(0, 24, 1, 0),
+			Parent = self.Body,
+		})
+		theme:Style(self.BodyPatch, { BackgroundColor3 = "Background" })
 
 		self.Content = Util.Create("Frame", {
 			Name = "Content",
@@ -3144,6 +3247,7 @@ Modules.Window = function()
 
 		self.TabList = TabList.new(ctx, self, self.Root, {
 			Title = self.Title,
+			TitleFont = Util.ResolveFont(config.TitleFont),
 			Logo = config.Logo,
 			Profile = config.Profile,
 		})
@@ -3333,6 +3437,10 @@ Modules.Window = function()
 		self.TopBar:SetPill(options)
 	end
 
+	function Window:SetTitleFont(font)
+		self.TabList:SetTitleFont(Util.ResolveFont(font))
+	end
+
 	function Window:SetProfile(profile)
 		self.TabList:SetProfile(profile)
 	end
@@ -3424,6 +3532,7 @@ Modules.init = function()
 		Themes = Theme.Presets,
 		Util = Util,
 		Icons = Icons,
+		LoadFont = Util.LoadFont,
 		Windows = {},
 	}
 
