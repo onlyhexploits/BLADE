@@ -367,6 +367,8 @@ Modules.Theme = function()
 		Thumb = "#FFFFFF",
 		ThumbOff = "#5A5A66",
 		Danger = "#F25F5C",
+		Success = "#3DD68C",
+		Warning = "#F5A524",
 		Scrim = "#000000",
 		ScrimTransparency = 0.45,
 		Shadow = "#000000",
@@ -568,6 +570,11 @@ Modules.Icons = function()
 			L(4, 6, 20, 6), L(9.5, 3.5, 14.5, 3.5),
 			B(6.5, 7, 11, 13.5, 2.5),
 			L(10, 11.5, 10, 17), L(14, 11.5, 14, 17),
+		},
+		["info"] = { C(12, 12, 9), D(12, 7.6, 1.2), L(12, 11, 12, 16.8) },
+		["alert"] = {
+			L(12, 3.8, 21.2, 19.8), L(21.2, 19.8, 2.8, 19.8), L(2.8, 19.8, 12, 3.8),
+			L(12, 9.8, 12, 14.2), D(12, 17, 1.1),
 		},
 		["dots"] = { D(5, 12, 1.7), D(12, 12, 1.7), D(19, 12, 1.7) },
 		["folder"] = { B(3, 8.5, 18, 10.5, 2.5), L(4, 6.6, 9.5, 6.6, 2.2) },
@@ -1968,6 +1975,140 @@ Modules.Label = function()
 	return Label
 end
 
+Modules.Button = function()
+	local Util = Require("Util")
+	local Row = Require("Row")
+	local Icon = Require("Icon")
+
+	local Button = setmetatable({}, { __index = Row })
+	Button.__index = Button
+
+	local Styles = {
+		Accent = "Accent",
+		Default = "Control",
+		Danger = "Danger",
+	}
+
+	-- Config: Name (row label), ButtonText (text on the button, "Run" by default), Style
+	-- ("Accent", "Default" or "Danger"), Icon (any name Icon can resolve), Callback, Disabled.
+	-- A click is an action, not a value, so it never touches config saving.
+	function Button.new(ctx, section, config)
+		local theme = ctx.Theme
+		local self = setmetatable(Row.new(ctx, section, config), Button)
+		self.Savable = false
+		self.Clicked = Util.Signal.new()
+		self._text = tostring(config.ButtonText or config.Text or "Run")
+		self._style = Styles[config.Style] and config.Style or "Accent"
+		self._hover = false
+		self._down = false
+
+		theme:Style(self.Label, { TextColor3 = "Text" })
+
+		self.Button = Util.Create("TextButton", {
+			Name = "Button",
+			Size = UDim2.new(0, 0, 0, 26),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundTransparency = 0,
+			LayoutOrder = 1,
+			Parent = self.Control,
+		})
+		theme:Corner(self.Button, "RadiusControl")
+		Util.Create("UIPadding", {
+			PaddingLeft = UDim.new(0, 12),
+			PaddingRight = UDim.new(0, 12),
+			Parent = self.Button,
+		})
+		Util.Create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 6),
+			Parent = self.Button,
+		})
+
+		if config.Icon then
+			self.IconHandle = Icon.new(theme, config.Icon, 14, "Text", self.Button)
+			if self.IconHandle then
+				self.IconHandle.Frame.LayoutOrder = 1
+			end
+		end
+		self.Value = Util.Create("TextLabel", {
+			Name = "Text",
+			Text = self._text,
+			Size = UDim2.new(0, 0, 1, 0),
+			AutomaticSize = Enum.AutomaticSize.X,
+			LayoutOrder = 2,
+			Parent = self.Button,
+		})
+		theme:Text(self.Value, "Text", "FontMedium", "TextSize")
+		self:_Restyle()
+
+		self:_Own(self.Button.MouseEnter:Connect(function()
+			self._hover = true
+			self:_Paint()
+		end))
+		self:_Own(self.Button.MouseLeave:Connect(function()
+			self._hover = false
+			self._down = false
+			self:_Paint()
+		end))
+		self:_Own(self.Button.MouseButton1Down:Connect(function()
+			self._down = true
+			self:_Paint()
+		end))
+		self:_Own(self.Button.MouseButton1Up:Connect(function()
+			self._down = false
+			self:_Paint()
+		end))
+		self:_Own(self.Button.MouseButton1Click:Connect(function()
+			self:Click()
+		end))
+		return self
+	end
+
+	function Button:_Restyle()
+		self.Ctx.Theme:Style(self.Button, { BackgroundColor3 = Styles[self._style] })
+	end
+
+	function Button:_Paint()
+		local transparency = 0
+		if self._down then
+			transparency = 0.3
+		elseif self._hover then
+			transparency = 0.12
+		end
+		Util.Tween(self.Button, { BackgroundTransparency = transparency }, 0.1)
+	end
+
+	function Button:Click()
+		if self._disabled then
+			return
+		end
+		self.Clicked:Fire(self)
+		if self.Callback then
+			task.spawn(self.Callback, self)
+		end
+	end
+
+	function Button:SetStyle(style)
+		if Styles[style] then
+			self._style = style
+			self:_Restyle()
+		end
+	end
+
+	function Button:Get()
+		return self._text
+	end
+
+	function Button:Set(text)
+		self._text = tostring(text)
+		self.Value.Text = self._text
+	end
+
+	return Button
+end
+
 Modules.Section = function()
 	local Util = Require("Util")
 	local Toggle = Require("Toggle")
@@ -1976,6 +2117,7 @@ Modules.Section = function()
 	local Slider = Require("Slider")
 	local DualSlider = Require("DualSlider")
 	local Label = Require("Label")
+	local Button = Require("Button")
 
 	local Section = {}
 	Section.__index = Section
@@ -2074,6 +2216,10 @@ Modules.Section = function()
 
 	function Section:AddDualSlider(config)
 		return self:_Add(DualSlider, config)
+	end
+
+	function Section:AddButton(config)
+		return self:_Add(Button, config)
 	end
 
 	function Section:AddLabel(config)
@@ -3203,6 +3349,258 @@ Modules.ConfigPanel = function()
 	return ConfigPanel
 end
 
+Modules.Notifier = function()
+	local Util = Require("Util")
+	local Icon = Require("Icon")
+
+	local Notifier = {}
+	Notifier.__index = Notifier
+
+	local Notification = {}
+	Notification.__index = Notification
+
+	local CardWidth = 300
+
+	local Types = {
+		Info = { Token = "Accent", Icon = "info" },
+		Success = { Token = "Success", Icon = "check" },
+		Warning = { Token = "Warning", Icon = "alert" },
+		Error = { Token = "Danger", Icon = "close" },
+	}
+
+	-- Slide is the side toasts enter from, Newest decides whether new ones stack above or below.
+	local Corners = {
+		BottomRight = {
+			Anchor = Vector2.new(1, 1), Position = UDim2.new(1, -16, 1, -16),
+			Align = Enum.HorizontalAlignment.Right, Vertical = Enum.VerticalAlignment.Bottom, Slide = 1, Newest = 1,
+		},
+		BottomLeft = {
+			Anchor = Vector2.new(0, 1), Position = UDim2.new(0, 16, 1, -16),
+			Align = Enum.HorizontalAlignment.Left, Vertical = Enum.VerticalAlignment.Bottom, Slide = -1, Newest = 1,
+		},
+		TopRight = {
+			Anchor = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 16),
+			Align = Enum.HorizontalAlignment.Right, Vertical = Enum.VerticalAlignment.Top, Slide = 1, Newest = -1,
+		},
+		TopLeft = {
+			Anchor = Vector2.new(0, 0), Position = UDim2.new(0, 16, 0, 16),
+			Align = Enum.HorizontalAlignment.Left, Vertical = Enum.VerticalAlignment.Top, Slide = -1, Newest = -1,
+		},
+	}
+
+	-- The host fills the screen minus a 16px margin but is capped at the card width, so toasts
+	-- shrink on narrow screens. It is a plain Frame, so clicks outside the toasts pass through.
+	function Notifier.new(ctx, gui, position)
+		local corner = Corners[position] or Corners.BottomRight
+		local self = setmetatable({}, Notifier)
+		self.Ctx = ctx
+		self.Active = {}
+		self.MaxVisible = 5
+		self._corner = corner
+		self._counter = 0
+
+		self.Host = Util.Create("Frame", {
+			Name = "Notifications",
+			BackgroundTransparency = 1,
+			AnchorPoint = corner.Anchor,
+			Position = corner.Position,
+			Size = UDim2.new(1, -32, 1, -32),
+			ZIndex = 100,
+			Parent = gui,
+		})
+		Util.Create("UISizeConstraint", {
+			MaxSize = Vector2.new(CardWidth, math.huge),
+			Parent = self.Host,
+		})
+		Util.Create("UIListLayout", {
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 8),
+			HorizontalAlignment = corner.Align,
+			VerticalAlignment = corner.Vertical,
+			Parent = self.Host,
+		})
+		return self
+	end
+
+	-- Config: Title, Content, Duration in seconds (4 by default, 0 keeps it until closed),
+	-- Type ("Info", "Success", "Warning" or "Error"), Icon (name, or false for none),
+	-- Callback (runs when the toast is clicked), Dismissable (click closes it, true by default).
+	function Notifier:Notify(config)
+		if type(config) == "string" then
+			config = { Title = config }
+		end
+		local theme = self.Ctx.Theme
+		local corner = self._corner
+		local kind = Types[config.Type] or Types.Info
+		local duration = config.Duration or 4
+		local timed = duration > 0 and duration < math.huge
+
+		local notification = setmetatable({ Notifier = self, Closed = false, Kind = kind }, Notification)
+		self._counter = self._counter + 1
+
+		local offscreen = UDim2.new(0, corner.Slide * (CardWidth + 40), 0, 0)
+		notification.Offscreen = offscreen
+
+		notification.Wrapper = Util.Create("Frame", {
+			Name = "Toast",
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			LayoutOrder = self._counter * corner.Newest,
+			Parent = self.Host,
+		})
+		notification.Card = Util.Create("TextButton", {
+			Name = "Card",
+			Position = offscreen,
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 0,
+			Parent = notification.Wrapper,
+		})
+		theme:Style(notification.Card, { BackgroundColor3 = "Card" })
+		theme:Corner(notification.Card, "RadiusCard")
+		theme:Stroke(notification.Card, "Stroke", 1)
+
+		local iconName = config.Icon
+		if iconName == nil then
+			iconName = kind.Icon
+		end
+		local textLeft = 16
+		if iconName then
+			notification.IconHandle = Icon.new(theme, iconName, 16, kind.Token, notification.Card)
+			if notification.IconHandle then
+				notification.IconHandle.Frame.Position = UDim2.fromOffset(16, 14)
+				textLeft = 42
+			end
+		end
+
+		local column = Util.Create("Frame", {
+			Name = "Text",
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(textLeft, 0),
+			Size = UDim2.new(1, -(textLeft + 14), 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Parent = notification.Card,
+		})
+		Util.Create("UIPadding", {
+			PaddingTop = UDim.new(0, 12),
+			PaddingBottom = UDim.new(0, timed and 20 or 12),
+			Parent = column,
+		})
+		Util.Create("UIListLayout", {
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 2),
+			Parent = column,
+		})
+		notification.Title = Util.Create("TextLabel", {
+			Name = "Title",
+			Text = config.Title or "",
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			TextWrapped = true,
+			LayoutOrder = 1,
+			Visible = (config.Title or "") ~= "",
+			Parent = column,
+		})
+		theme:Text(notification.Title, "Text", "FontBold", "TextSizeLarge")
+		notification.Content = Util.Create("TextLabel", {
+			Name = "Content",
+			Text = config.Content or "",
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			TextWrapped = true,
+			LayoutOrder = 2,
+			Visible = (config.Content or "") ~= "",
+			Parent = column,
+		})
+		theme:Text(notification.Content, "TextMuted", "FontMedium", "TextSize")
+
+		if timed then
+			-- Inset past the corner radius so the bar's square ends never poke out of the card.
+			local track = Util.Create("Frame", {
+				Name = "Progress",
+				Position = UDim2.new(0, 14, 1, -10),
+				Size = UDim2.new(1, -28, 0, 2),
+				ZIndex = 2,
+				Parent = notification.Card,
+			})
+			theme:Style(track, { BackgroundColor3 = "Track" })
+			Util.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = track })
+			notification.Bar = Util.Create("Frame", {
+				Name = "Fill",
+				Size = UDim2.fromScale(1, 1),
+				ZIndex = 3,
+				Parent = track,
+			})
+			theme:Style(notification.Bar, { BackgroundColor3 = kind.Token })
+			Util.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = notification.Bar })
+		end
+
+		notification.Card.MouseButton1Click:Connect(function()
+			if config.Callback then
+				task.spawn(config.Callback, notification)
+			end
+			if config.Dismissable ~= false then
+				notification:Close()
+			end
+		end)
+
+		table.insert(self.Active, notification)
+		Util.Tween(notification.Card, { Position = UDim2.new(0, 0, 0, 0) }, 0.28, Enum.EasingStyle.Quint)
+		if timed then
+			Util.Tween(notification.Bar, { Size = UDim2.fromScale(0, 1) }, duration, Enum.EasingStyle.Linear)
+			task.delay(duration, function()
+				notification:Close()
+			end)
+		end
+		while #self.Active > self.MaxVisible do
+			self.Active[1]:Close()
+		end
+		return notification
+	end
+
+	function Notifier:Clear()
+		for index = #self.Active, 1, -1 do
+			self.Active[index]:Close()
+		end
+	end
+
+	function Notification:SetTitle(text)
+		self.Title.Text = text
+		self.Title.Visible = text ~= ""
+	end
+
+	function Notification:SetContent(text)
+		self.Content.Text = text
+		self.Content.Visible = text ~= ""
+	end
+
+	-- Slides out, then collapses the gap so the toasts below glide up instead of jumping.
+	function Notification:Close()
+		if self.Closed then
+			return
+		end
+		self.Closed = true
+		local active = self.Notifier.Active
+		local index = Util.IndexOf(active, self)
+		if index then
+			table.remove(active, index)
+		end
+		local wrapper = self.Wrapper
+		wrapper.AutomaticSize = Enum.AutomaticSize.None
+		wrapper.Size = UDim2.new(1, 0, 0, wrapper.AbsoluteSize.Y)
+		Util.Tween(self.Card, { Position = self.Offscreen }, 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		task.delay(0.2, function()
+			Util.Tween(wrapper, { Size = UDim2.new(1, 0, 0, 0) }, 0.15)
+			task.delay(0.16, function()
+				wrapper:Destroy()
+			end)
+		end)
+	end
+
+	return Notifier
+end
+
 Modules.Window = function()
 	local UserInputService = game:GetService("UserInputService")
 
@@ -3216,6 +3614,7 @@ Modules.Window = function()
 	local TabList = Require("TabList")
 	local Tab = Require("Tab")
 	local ConfigPanel = Require("ConfigPanel")
+	local Notifier = Require("Notifier")
 
 	local Window = {}
 	Window.__index = Window
@@ -3290,6 +3689,9 @@ Modules.Window = function()
 			DisplayOrder = config.DisplayOrder or 100,
 			Parent = ResolveParent(config),
 		})
+
+		-- Toasts live on the ScreenGui, not under Root, so they stay put when the window moves or hides.
+		self.Notifier = Notifier.new(ctx, self.Gui, config.NotifyPosition)
 
 		-- Root is the window body only. The sidebar sits flush against its left edge, so Root is
 		-- nudged right by half the sidebar width to center the pair. Dragging only touches the offset.
@@ -3577,6 +3979,11 @@ Modules.Window = function()
 		self.TopBar:SetPill(options)
 	end
 
+	-- Title, Content, Duration, Type, Icon, Callback. See Notifier:Notify.
+	function Window:Notify(config)
+		return self.Notifier:Notify(config)
+	end
+
 	function Window:SetTitleFont(font)
 		self.TabList:SetTitleFont(Util.ResolveFont(font))
 	end
@@ -3697,6 +4104,16 @@ Modules.init = function()
 	-- "lucide" by default, or "solar", "craft", "geist", "sfsymbols", "gravity".
 	function Library:SetIconsType(iconType)
 		Icon.SetType(iconType)
+	end
+
+	-- Shows the toast on the most recently created window.
+	function Library:Notify(config)
+		local window = self.Windows[#self.Windows]
+		if not window then
+			warn("BladeUI: create a window before calling Notify")
+			return nil
+		end
+		return window:Notify(config)
 	end
 
 	function Library:Destroy()
